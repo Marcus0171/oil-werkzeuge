@@ -15,6 +15,8 @@ SYMBOLE = {
     "❌": " - ",         # Kreuz
     "✔": " + ",         # Haken
     "⚠": "(!)",         # Warndreieck
+    "→": "->",          # Pfeil - der haeufigste Ausrutscher: kein
+                        # Emoji, aber in cp1252 trotzdem nicht darstellbar
 }
 
 

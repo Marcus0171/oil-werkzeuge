@@ -119,6 +119,21 @@ pruefe("erledigt wird gemeldet",
 pruefe("erledigt nur einmal",
        w._naechster_ausloeser({"erledigt_gemeldet": True}, True, 5) is None)
 
+print("\n== Konsolentauglichkeit ==")
+# nur_text verspricht, Text fuer die Windows-Konsole zu entschaerfen. Die
+# laeuft oft auf cp1252 - was sich dort nicht kodieren laesst, bringt die
+# Ausgabe zum Absturz, und eine Meldung, die niemand sieht, ist keine.
+_lage, _ = w.baue_gesamtlage(CFG, {"Diesel": 1, "Pipeline": 1},
+                             FREITAG_MITTAG, {})
+_einzeln = w.baue_meldung(CFG, VERTRAG, {"Diesel": 1, "Pipeline": 1},
+                          datetime(2026, 1, 2, 20, 15), False, FREITAG_MITTAG)
+for _name, _roh in (("Gesamtlage", _lage), ("Einzelmeldung", _einzeln)):
+    try:
+        w.nur_text(_roh).encode("cp1252")
+        pruefe("%s laesst sich auf cp1252 ausgeben" % _name, True)
+    except UnicodeEncodeError as _e:
+        pruefe("%s laesst sich auf cp1252 ausgeben" % _name, False, _e)
+
 print("\n== Kein Name im Code ==")
 meldung = w.baue_meldung(CFG, VERTRAG, {"Diesel": 0, "Pipeline": 0},
                          datetime(2026, 1, 2, 20, 15), False)

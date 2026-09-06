@@ -212,8 +212,13 @@ def baue_gesamtlage(cfg, bestand, jetzt, zustand):
     return "\n".join([kopf] + zeilen), knapp
 
 
-def baue_meldung(cfg, v, bestand, termin, erledigt):
-    """Der Text zu EINER anstehenden Teillieferung."""
+def baue_meldung(cfg, v, bestand, termin, erledigt, jetzt=None):
+    """Der Text zu EINER anstehenden Teillieferung.
+
+    `jetzt` wird uebergeben, nicht aus der Uhr geholt: Ein Text, der sich
+    je nach Aufrufzeitpunkt aendert, laesst sich nicht pruefen.
+    """
+    jetzt = jetzt or datetime.now()
     gedeckt, fehlend = deckung(v, bestand)
     kopf = "<b>%s - Vertrag %s</b>" % (k.konzernname(cfg), v.get("nummer", "?"))
 
@@ -228,12 +233,19 @@ def baue_meldung(cfg, v, bestand, termin, erledigt):
     else:
         zeilen.append("\U0001F7E2 <b>%s - Fenster offen, alles da.</b>"
                       % termin.strftime("%H:%M"))
+
+    minuten = max(0, int((termin - jetzt).total_seconds() // 60))
+    zeilen.append("Noch %d Std %d Min bis zum Termin."
+                  % (minuten // 60, minuten % 60))
     zeilen.append("")
+    # Dieselbe Reihenfolge wie in baue_gesamtlage - erst was da ist, dann
+    # was gebraucht wird. Beide Bloecke stehen in derselben Nachricht
+    # untereinander, und zwei Lesarten in einem Text sind eine zu viel.
     for ware, noetig, da in fehlend:
-        zeilen.append("❌ %s: %s noetig, nur %s da → <b>%s fehlen</b>"
-                      % (ware, zahl(noetig), zahl(da), zahl(noetig - da)))
+        zeilen.append("❌ %s: %s da, %s noetig → <b>%s fehlen</b>"
+                      % (ware, zahl(da), zahl(noetig), zahl(noetig - da)))
     for ware, noetig, da in gedeckt:
-        zeilen.append("✔ %s: %s noetig, %s da" % (ware, zahl(noetig), zahl(da)))
+        zeilen.append("✔ %s: %s da, %s noetig" % (ware, zahl(da), zahl(noetig)))
     if fehlend:
         zeilen.append("\nJemand muss nachliefern, sonst platzt der Vertrag.")
     return "\n".join(zeilen)
@@ -340,7 +352,7 @@ def einmal(cfg, senden=True):
             rueckgang = eintrag["start"].get(ware, 0) - bestand.get(ware, 0)
             erledigt = menge > 0 and rueckgang >= menge * ERKENNUNGSSCHWELLE
 
-        text = baue_meldung(cfg, v, bestand, termin, erledigt)
+        text = baue_meldung(cfg, v, bestand, termin, erledigt, jetzt)
         if lage:
             text = text + "\n\n" + lage
         print(nur_text(text))
