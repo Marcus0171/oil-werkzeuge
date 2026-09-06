@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Morgenlage</title>
+<style>
+  /* Bewusst ohne fremde Schriften und Bibliotheken: Die Seite laeuft auf
+     einem Rechner, der ausser der Spielschnittstelle nichts erreichen
+     koennen muss. */
+  :root {
+    --grund: #fbfaf8;  --karte: #ffffff;  --rand: #e3ded6;
+    --schrift: #23201c; --leise: #6d675e;
+    --gut: #1f7a4d;    --schlecht: #b3261e; --warnung: #9a6700;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --grund: #171614; --karte: #201e1b; --rand: #35322d;
+      --schrift: #ece8e1; --leise: #a29a8e;
+      --gut: #5fd39b;   --schlecht: #ff8a80; --warnung: #e3b341;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 1.5rem 1rem 3rem;
+    background: var(--grund); color: var(--schrift);
+    font: 15px/1.55 -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 60rem; margin: 0 auto; }
+  h1 { font-size: 1.35rem; margin: 0 0 .2rem; }
+  .stand { color: var(--leise); font-size: .85rem; margin-bottom: 1.5rem; }
+  .raster { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); }
+  .karte {
+    background: var(--karte); border: 1px solid var(--rand);
+    border-radius: 10px; padding: 1rem 1.1rem;
+  }
+  .karte h2 {
+    font-size: .78rem; text-transform: uppercase; letter-spacing: .07em;
+    color: var(--leise); margin: 0 0 .7rem; font-weight: 600;
+  }
+  .gross { font-size: 1.9rem; font-weight: 600; line-height: 1.15; }
+  .neben { color: var(--leise); font-size: .85rem; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { text-align: right; padding: .3rem 0; border-bottom: 1px solid var(--rand); }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--leise); font-weight: 600; font-size: .78rem; }
+  tr:last-child td { border-bottom: none; }
+  .gut { color: var(--gut); }
+  .schlecht { color: var(--schlecht); font-weight: 600; }
+  .warnung { color: var(--warnung); }
+  .breit { grid-column: 1 / -1; }
+  .band {
+    border-radius: 8px; padding: .7rem 1rem; margin-bottom: 1rem;
+    border: 1px solid currentColor; font-size: .92rem;
+  }
+  .band.schlecht { background: color-mix(in srgb, currentColor 8%, transparent); }
+  .verlauf { display: grid; gap: .55rem .9rem; grid-template-columns: auto 1fr auto; align-items: center; }
+  .verlauf svg { width: 100%; height: 26px; display: block; }
+  .leer { color: var(--leise); font-style: italic; }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="konzern">Morgenlage</h1>
+  <div class="stand" id="stand">wird geladen …</div>
+  <div id="meldungen"></div>
+  <div class="raster" id="inhalt"></div>
+</main>
+
+<script>
+"use strict";
+
+const zahl = n => (n === null || n === undefined || n === "") ? "–"
+  : Number(n).toLocaleString("de-DE");
+
+const el = (tag, klasse, text) => {
+  const e = document.createElement(tag);
+  if (klasse) e.className = klasse;
+  if (text !== undefined) e.textContent = text;
+  return e;
+};
+
+function karte(titel, ...kinder) {
+  const k = el("div", "karte");
+  k.appendChild(el("h2", null, titel));
+  kinder.filter(Boolean).forEach(kind => k.appendChild(kind));
+  return k;
+}
+
+function tabelle(kopf, zeilen) {
+  const t = el("table");
+  if (kopf) {
+    const tr = el("tr");
+    kopf.forEach(h => tr.appendChild(el("th", null, h)));
+    t.appendChild(tr);
+  }
+  zeilen.forEach(z => {
+    const tr = el("tr");
+    z.forEach(feld => {
+      const td = el("td");
+      if (feld && typeof feld === "object") {
+        td.textContent = feld.text;
+        if (feld.klasse) td.className = feld.klasse;
+      } else {
+        td.textContent = feld;
+      }
+      tr.appendChild(td);
+    });
+    t.appendChild(tr);
+  });
+  return t;
+}
+
+// Eine Kurve ohne Achsen: Es geht nur darum, ob es bergauf oder bergab
+// geht. Die Zahlen daneben sagen, worum es geht.
+function kurve(werte) {
+  const gueltig = werte.filter(v => typeof v === "number");
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 100 26");
+  svg.setAttribute("preserveAspectRatio", "none");
+  if (gueltig.length < 2) return svg;
+
+  const min = Math.min(...gueltig), max = Math.max(...gueltig);
+  const spanne = (max - min) || 1;
+  const punkte = werte.map((v, i) => {
+    const x = (i / (werte.length - 1)) * 100;
+    const y = 24 - ((typeof v === "number" ? v : min) - min) / spanne * 22;
+    return `${x.toFixed(2)},${y.toFixed(2)}`;
+  }).join(" ");
+
+  const linie = document.createElementNS(svg.namespaceURI, "polyline");
+  linie.setAttribute("points", punkte);
+  linie.setAttribute("fill", "none");
+  linie.setAttribute("stroke", "currentColor");
+  linie.setAttribute("stroke-width", "1.5");
+  linie.setAttribute("stroke-linejoin", "round");
+  linie.setAttribute("vector-effect", "non-scaling-stroke");
+  svg.appendChild(linie);
+  return svg;
+}
+
+function zeichne(d) {
+  document.title = "Morgenlage · " + d.konzern;
+  document.getElementById("konzern").textContent = "Morgenlage · " + d.konzern;
+  document.getElementById("stand").textContent = "Stand " + d.stand;
+
+  const meldungen = document.getElementById("meldungen");
+  meldungen.replaceChildren();
+  (d.fehler || []).forEach(f =>
+    meldungen.appendChild(el("div", "band schlecht", f)));
+  if (d.sperre_bis)
+    meldungen.appendChild(el("div", "band warnung",
+      "Annahmesperre nach der letzten Lieferung – wieder frei ab " + d.sperre_bis + "."));
+
+  const inhalt = document.getElementById("inhalt");
+  inhalt.replaceChildren();
+
+  // Naechste Lieferung
+  const n = d.naechste_lieferung;
+  if (n) {
+    const std = Math.floor(n.in_minuten / 60), min = n.in_minuten % 60;
+    const k = karte("Naechste Lieferung",
+      el("div", "gross", n.uhrzeit),
+      el("div", "neben", `in ${std} Std ${min} Min · Vertrag ${n.vertrag}`));
+    if (n.fenster_offen)
+      k.appendChild(el("div", "warnung", "Fenster offen – Deckung zaehlt jetzt."));
+    inhalt.appendChild(k);
+  } else {
+    inhalt.appendChild(karte("Naechste Lieferung",
+      el("div", "leer", "Kein laufender Vertrag eingetragen.")));
+  }
+
+  // Konto
+  inhalt.appendChild(karte("Konzernkonto",
+    el("div", "gross", zahl(d.konto)),
+    el("div", "neben", "Dollar")));
+
+  // Deckung
+  const deckung = d.deckung || [];
+  inhalt.appendChild(karte(
+    `Deckung · ${d.offene_lieferungen} offene Lieferung${d.offene_lieferungen === 1 ? "" : "en"} in ${d.horizont_tage} Tagen`,
+    deckung.length
+      ? tabelle(["Ware", "noetig", "da", "Reserve"], deckung.map(z => [
+          z.ware, zahl(z.noetig), zahl(z.da),
+          z.fehlt > 0
+            ? { text: "−" + zahl(z.fehlt), klasse: "schlecht" }
+            : { text: zahl(z.rest), klasse: "gut" },
+        ]))
+      : el("div", "leer", "Nichts offen.")));
+
+  // Marktpreise
+  const preise = Object.entries(d.preise || {});
+  inhalt.appendChild(karte("Marktpreise",
+    preise.length
+      ? tabelle(null, preise.map(([ware, p]) =>
+          [ware, p.toLocaleString("de-DE", { minimumFractionDigits: 2 })]))
+      : el("div", "leer", "Nicht abrufbar.")));
+
+  // Lagerverlauf
+  const verlauf = d.verlauf || [];
+  const lager = d.lager || {};
+  const waren = Object.keys(lager).filter(ware =>
+    verlauf.some(z => typeof z[ware] === "number"));
+  const block = el("div", "verlauf");
+  if (waren.length && verlauf.length > 1) {
+    waren.forEach(ware => {
+      block.appendChild(el("div", null, ware));
+      block.appendChild(kurve(verlauf.map(z => z[ware])));
+      block.appendChild(el("div", null, zahl(lager[ware])));
+    });
+  }
+  inhalt.appendChild(karte("Lagerverlauf",
+    waren.length && verlauf.length > 1 ? block
+      : el("div", "leer", "Noch kein Verlauf – der Waechter schreibt ihn bei jeder Pruefung.")));
+}
+
+async function hole() {
+  try {
+    const antwort = await fetch("api/lage", { cache: "no-store" });
+    if (!antwort.ok) throw new Error("Server antwortete mit " + antwort.status);
+    zeichne(await antwort.json());
+  } catch (e) {
+    document.getElementById("stand").textContent =
+      "Daten nicht erreichbar: " + e.message;
+  }
+}
+
+hole();
+setInterval(hole, 60000);
+</script>
+</body>
+</html>

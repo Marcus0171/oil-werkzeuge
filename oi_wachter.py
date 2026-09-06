@@ -41,6 +41,13 @@ ANNAHMESPERRE = timedelta(hours=1, minutes=1)
 # 100 %, weil zwischen zwei Abfragen auch anderes zu- und abgehen kann.
 ERKENNUNGSSCHWELLE = 0.9
 
+# Wie weit die Gesamtlage vorausrechnet. Ein Vertrag darf ein Enddatum weit
+# in der Zukunft haben; ohne Grenze wuerde "reicht das Lager fuer alle
+# offenen Lieferungen" ueber Jahre summiert - eine Zahl, die niemandem
+# hilft, und eine Schleife, die bei jedem Abruf ueber jeden Tag laeuft.
+# Vierzehn Tage sind der Zeitraum, in dem man noch etwas unternehmen kann.
+HORIZONT_TAGE = 14
+
 # Reihenfolge der Spalten in lager_verlauf.csv.
 SPALTEN = ["Rohoel", "Kerosin", "Diesel", "Benzin", "Turm", "Tank", "Pipeline"]
 
@@ -111,14 +118,17 @@ def sperrzeit(cfg, jetzt):
     return None
 
 
-def offene_lieferungen(v, jetzt, zustand):
-    """Noch ausstehende Termine eines Vertrags bis einschliesslich "bis".
+def offene_lieferungen(v, jetzt, zustand, horizont=HORIZONT_TAGE):
+    """Noch ausstehende Termine eines Vertrags, hoechstens `horizont` Tage weit.
 
     Termine, die bereits als erledigt gemeldet wurden, zaehlen nicht mit.
+    Das Enddatum des Vertrags begrenzt zusaetzlich - es gilt, was frueher
+    kommt.
     """
+    grenze = (jetzt + timedelta(days=horizont)).date()
     if v.get("bis"):
         try:
-            ende = datetime.strptime(v["bis"], "%Y-%m-%d").date()
+            ende = min(datetime.strptime(v["bis"], "%Y-%m-%d").date(), grenze)
         except ValueError:
             ende = jetzt.date()
     else:
@@ -197,8 +207,8 @@ def baue_gesamtlage(cfg, bestand, jetzt, zustand):
                               % (ware, zahl(da), zahl(noetig), zahl(rest),
                                  anteil, hinweis))
 
-    kopf = "<b>Gesamtlage - %d offene Lieferung%s</b>" % (
-        anzahl, "" if anzahl == 1 else "en")
+    kopf = ("<b>Gesamtlage - %d offene Lieferung%s in den naechsten %d "
+            "Tagen</b>" % (anzahl, "" if anzahl == 1 else "en", HORIZONT_TAGE))
     return "\n".join([kopf] + zeilen), knapp
 
 

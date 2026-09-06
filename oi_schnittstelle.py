@@ -48,6 +48,53 @@ class SchnittstellenFehler(Exception):
     """Die Gegenseite hat einen Fehler gemeldet oder war nicht erreichbar."""
 
 
+# Stimmt die Kennung oder der Code nicht, meldet die Schnittstelle KEINEN
+# SOAP-Fehler. Sie antwortet mit einem gewoehnlichen Rueckgabewert, der den
+# Text "not authorized" enthaelt. Wer nur auf <faultstring> prueft, haelt
+# das fuer ein Ergebnis.
+#
+# Es kommt schlimmer: getCorporateGroupBalance antwortet in diesem Fall mit
+# "0" - von einem echten Kontostand null nicht zu unterscheiden. Ein
+# einzelner Abruf kann das nicht erkennen. Wer den Kontostand braucht,
+# frage vorher etwas ab, das sich wehrt, etwa den Lagerstand.
+ABWEISUNGEN = ("not authorized", "not authorised", "access denied",
+               "no access", "wrong code")
+
+
+def _auswerten(roh, op="?"):
+    """Wertet eine Antwort aus. Getrennt vom Abruf, damit pruefbar.
+
+    Rueckgabe ist ein Dict bei Schluessel-Wert-Paaren, eine Liste bei
+    <item>-Folgen, sonst der Text des einzelnen Rueckgabewerts.
+    """
+    fehler = re.search(r"<faultstring>(.*?)</faultstring>", roh, re.S)
+    if fehler:
+        raise SchnittstellenFehler("Fehler bei %s: %s"
+                                   % (op, fehler.group(1).strip()))
+
+    paare = re.findall(
+        r"<key[^>]*>(.*?)</key>\s*<value[^>]*>(.*?)</value>", roh, re.S)
+    if paare:
+        return {int(s.strip()): w.strip() for s, w in paare}
+
+    # Erst nach den Paaren pruefen, nicht davor: In einer Map steckt jedes
+    # Schluessel-Wert-Paar seinerseits in einem <item>, und eine zu frueh
+    # greifende Listenerkennung wuerde die Map als Liste ausgeben.
+    eintraege = re.findall(r"<item[^>]*>(.*?)</item>", roh, re.S)
+    if eintraege:
+        return [re.sub(r"<[^>]+>", "", e).strip() for e in eintraege]
+
+    einzeln = re.search(r"<return[^>]*>(.*?)</return>", roh, re.S)
+    if einzeln:
+        wert = re.sub(r"<[^>]+>", "", einzeln.group(1)).strip()
+        if wert.lower() in ABWEISUNGEN:
+            raise SchnittstellenFehler(
+                "Abgewiesen bei %s: konzern.kid oder spiel.code stimmen "
+                "nicht." % op)
+        return wert
+    return None
+
+
 def rufe(welt, op, args, timeout=25):
     """Eine Abfrage. `args` ist eine Liste von (Name, Typ, Wert).
 
@@ -71,27 +118,7 @@ def rufe(welt, op, args, timeout=25):
     except Exception as e:
         raise SchnittstellenFehler("%s nicht erreichbar: %s" % (welt, e))
 
-    fehler = re.search(r"<faultstring>(.*?)</faultstring>", roh, re.S)
-    if fehler:
-        raise SchnittstellenFehler("Fehler bei %s: %s"
-                                   % (op, fehler.group(1).strip()))
-
-    paare = re.findall(
-        r"<key[^>]*>(.*?)</key>\s*<value[^>]*>(.*?)</value>", roh, re.S)
-    if paare:
-        return {int(s.strip()): w.strip() for s, w in paare}
-
-    # Erst nach den Paaren pruefen, nicht davor: In einer Map steckt jedes
-    # Schluessel-Wert-Paar seinerseits in einem <item>, und eine zu frueh
-    # greifende Listenerkennung wuerde die Map als Liste ausgeben.
-    eintraege = re.findall(r"<item[^>]*>(.*?)</item>", roh, re.S)
-    if eintraege:
-        return [re.sub(r"<[^>]+>", "", e).strip() for e in eintraege]
-
-    einzeln = re.search(r"<return[^>]*>(.*?)</return>", roh, re.S)
-    if einzeln:
-        return re.sub(r"<[^>]+>", "", einzeln.group(1)).strip()
-    return None
+    return _auswerten(roh, op)
 
 
 def lagerstand(cfg):
@@ -104,9 +131,17 @@ def lagerstand(cfg):
     zugang = [("kid", "int", kid), ("code", "string", code)]
 
     kraftstoff = rufe(welt, "getCorporateGroupLevel",
-                      zugang + [("typ", "int", TYP_TANKLAGER)]) or {}
+                      zugang + [("typ", "int", TYP_TANKLAGER)])
     equipment = rufe(welt, "getCorporateGroupStock",
-                     zugang + [("typ", "int", TYP_EQUIPMENT)]) or {}
+                     zugang + [("typ", "int", TYP_EQUIPMENT)])
+
+    # Erwartet werden zwei Maps. Kommt etwas anderes, ist die Antwort nicht
+    # das, wofuer wir sie halten - lieber hier abbrechen als weiter unten
+    # mit einem Fehler, der nach einem Programmfehler aussieht.
+    for name, antwort in (("Tanklager", kraftstoff), ("Equipment", equipment)):
+        if not isinstance(antwort, dict):
+            raise SchnittstellenFehler(
+                "Unerwartete Antwort beim %s: %r" % (name, antwort))
 
     bestand = {}
     for schluessel, name in ROHSTOFF_KEYS.items():
