@@ -126,9 +126,12 @@ def code(cfg):
 
 def vertraege(cfg, nur_aktive=True):
     """Die Vertraege aus der Konfiguration, ohne die Hinweiszeilen."""
-    alle = [v for v in (cfg.get("vertraege") or []) if isinstance(v, dict)]
+    alle = [v for v in (cfg.get("vertraege") or [])
+            if isinstance(v, dict) and v.get("bedarf")]
     if nur_aktive:
-        alle = [v for v in alle if v.get("aktiv")]
+        # Fehlt der Schluessel, gilt ein Vertrag als aktiv. "aktiv": false
+        # ist die Art, einen Eintrag stillzulegen, ohne ihn zu loeschen.
+        alle = [v for v in alle if v.get("aktiv", True)]
     return alle
 
 
