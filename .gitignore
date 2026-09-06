@@ -13,3 +13,7 @@ lager_verlauf.csv
 # Python
 __pycache__/
 *.pyc
+
+# Zwischendatei fuer den Bot-Token. bot_einrichten.py loescht sie selbst,
+# aber sie darf auch dann nicht versioniert werden, wenn etwas schiefgeht.
+token.txt
