@@ -1,0 +1,50 @@
+{
+  "_hinweis": "Vorlage. Nach oi_config.json kopieren und ausfuellen. Diese Datei enthaelt keine echten Zugangsdaten und darf weitergegeben werden.",
+
+  "konzern": {
+    "_hinweis": "name erscheint in Meldungen und Betreffzeilen. kid ist die Konzernkennung aus dem Spiel.",
+    "name": "Mein Konzern",
+    "kid": 0
+  },
+
+  "spiel": {
+    "_hinweis": "welt ist der Server, auf dem der Konzern spielt. code ist der Schnittstellencode aus den Konzerneinstellungen - er ist ein Geheimnis und gehoert nicht in ein oeffentliches Repo.",
+    "welt": "s1.oilimperium.de",
+    "code": "HIER-DEN-SCHNITTSTELLENCODE-EINTRAGEN"
+  },
+
+  "telegram": {
+    "_hinweis": "Optional. Ohne Token meldet der Waechter nur ueber Windows. Token vom BotFather, chat_ids ueber bot_einrichten.py.",
+    "token": "",
+    "chat_ids": []
+  },
+
+  "windows_meldung": true,
+  "takt_minuten": 10,
+
+  "vertraege": [
+    {
+      "_hinweis": "Ein Eintrag je Vertrag. Die erste Ware in bedarf dient zur Erkennung, ob eine Lieferung stattgefunden hat. Mit aktiv=false wird ein Eintrag uebergangen, ohne ihn zu loeschen.",
+      "nummer": "00-00-0-00-00",
+      "aktiv": false,
+      "slots": ["09:35", "20:15"],
+      "bedarf": {
+        "Diesel": 0,
+        "Pipeline": 0
+      },
+      "bis": "2026-12-31"
+    }
+  ],
+
+  "dashboard": {
+    "_hinweis": "adresse 127.0.0.1 bedeutet: nur vom selben Rechner erreichbar. Wer die Seite aus dem Netz erreichen will, stellt einen Webserver mit TLS davor und laesst diese Bindung so. benutzer und passwort schuetzen die Seite per HTTP-Basic; leer bedeutet ungeschuetzt.",
+    "adresse": "127.0.0.1",
+    "port": 8099,
+    "benutzer": "",
+    "passwort": ""
+  },
+
+  "mitglieder": {
+    "_hinweis": "Optional und normalerweise leer. Nur noetig, wenn eine Person mehrere Spielkonten hat und die Anzeige sie zusammenfassen soll. Aufbau: \"Kontoname\": { \"person\": \"Anzeigename\", \"status\": \"aktiv\" }. Ohne Eintrag wird jeder Kontoname unveraendert angezeigt."
+  }
+}

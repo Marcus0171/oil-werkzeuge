@@ -1,0 +1,15 @@
+# Die ausgefuellte Konfiguration bleibt auf dem eigenen Rechner. Versioniert
+# ist nur die Vorlage oi_config.example.json.
+oi_config.json
+
+# Laufzeitstand
+oi_state.json
+lager_verlauf.csv
+
+# Sicherungen jeder Art. Bewusst breit gefasst.
+*.vor-*
+*.bak
+
+# Python
+__pycache__/
+*.pyc
