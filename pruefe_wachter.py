@@ -163,6 +163,69 @@ pruefe("im Eintrag vermerkt", _e.get("erledigt") is True, _e)
 pruefe("bleibt erledigt, auch wenn wieder aufgefuellt wird",
        w.ist_erledigt(_v, _e, {"Kerosin": 500_000}))
 
+print("\n== Welche Waren taugen als Indiz ==")
+_eq = {"nummer": "nur-eq", "bedarf": {"Turm": 10, "Tank": 5}}
+pruefe("Equipment allein belegt nichts", w.fluessige(_eq) == [], w.fluessige(_eq))
+pruefe("nur Equipment - nicht beweisbar",
+       not w.ist_erledigt(_eq, {"start": {"Turm": 100}}, {"Turm": 50}))
+_gemischt = {"nummer": "gemischt",
+             "bedarf": {"Kerosin": 100, "Pipeline": 60, "Tank": 50}}
+pruefe("aus einem gemischten Korb bleiben die Kraftstoffe",
+       w.fluessige(_gemischt) == ["Kerosin"], w.fluessige(_gemischt))
+
+print("\n== Eine stumme Ware legt kein Veto ein ==")
+# Der Fall vom 05.09.2026: Kerosin sank exakt um die Liefermenge, im selben
+# Zehnminutenfenster kamen aber 440.000 Benzin herein. Wer verlangt, dass
+# JEDE Ware faellt, meldet den ganzen Tag "offen".
+_v5 = {"nummer": "05-09",
+       "bedarf": {"Kerosin": 494_305, "Benzin": 357_595, "Tank": 50}}
+_start5 = {"Kerosin": 1_000_000, "Benzin": 1_000_000, "Tank": 100}
+_jetzt5 = {"Kerosin": 505_695, "Benzin": 1_440_000, "Tank": 100}
+pruefe("Kerosin belegt, Benzin schweigt - erkannt",
+       w.ist_erledigt(_v5, {"start": _start5}, _jetzt5))
+
+# Ein Abgang, der zu klein ist, bleibt ein Widerspruch.
+_zuwenig = {"Kerosin": 900_000, "Benzin": 1_000_000, "Tank": 100}
+pruefe("ein zu kleiner Abgang zaehlt nicht",
+       not w.ist_erledigt(_v5, {"start": _start5}, _zuwenig))
+
+print("\n== Zwei Vertraege teilen sich einen Rueckgang nicht ==")
+# Beide brauchen 100.000 Kerosin, das Lager sank aber nur um 100.000.
+# Ohne Buchfuehrung verbuchten beide denselben Rueckgang fuer sich.
+_a = {"nummer": "A", "bedarf": {"Kerosin": 100_000}}
+_b = {"nummer": "B", "bedarf": {"Kerosin": 100_000}}
+_budget = {}
+_start_ab, _jetzt_ab = {"Kerosin": 500_000}, {"Kerosin": 400_000}
+pruefe("der erste bekommt ihn",
+       w.ist_erledigt(_a, {"start": _start_ab}, _jetzt_ab, _budget))
+pruefe("der zweite nicht",
+       not w.ist_erledigt(_b, {"start": _start_ab}, _jetzt_ab, _budget))
+
+print("\n== Geistertermine ==")
+# Der Fall vom 06.09.2026: sechs Lieferungen, aber sieben moegliche Termine
+# bis zum Enddatum. "bis" nennt nur den letzten TAG - wird ein Vertrag
+# mitten am Tag angenommen, passt der Rest nicht auf ganze Tage.
+_g = {"nummer": "06-09", "slots": ["09:35", "20:15"],
+      "bedarf": {"Kerosin": 1}, "bis": "2026-09-09", "lieferungen": 6}
+_dann = datetime(2026, 9, 6, 12, 0)
+pruefe("ohne Deckel waeren es sieben Termine",
+       len(w.offene_lieferungen(dict(_g, lieferungen=None), _dann, {})) == 7,
+       len(w.offene_lieferungen(dict(_g, lieferungen=None), _dann, {})))
+pruefe("mit lieferungen=6 bleiben sechs",
+       len(w.offene_lieferungen(_g, _dann, {})) == 6,
+       len(w.offene_lieferungen(_g, _dann, {})))
+
+print("\n== Erkannt zaehlt, nicht erst gemeldet ==")
+# "erledigt" ist die Tatsache, "erledigt_gemeldet" nur der Versand. Eine
+# erkannte, aber nicht zugestellte Lieferung darf die Deckungsrechnung
+# nicht mehr belasten.
+_z = {w.schluessel(_g, datetime(2026, 9, 6, 20, 15)): {"erledigt": True}}
+pruefe("eine erkannte Lieferung faellt heraus",
+       len(w.offene_lieferungen(_g, _dann, _z)) == 5,
+       len(w.offene_lieferungen(_g, _dann, _z)))
+pruefe("und wird als erledigt gezaehlt",
+       w.erledigte_lieferungen(_g, _z) == 1, w.erledigte_lieferungen(_g, _z))
+
 print("\n== Konsolentauglichkeit ==")
 # nur_text verspricht, Text fuer die Windows-Konsole zu entschaerfen. Die
 # laeuft oft auf cp1252 - was sich dort nicht kodieren laesst, bringt die

@@ -29,6 +29,12 @@ EQUIPMENT_KEYS = {
     7: ("Turm", "C"), 8: ("Tank", "C"), 9: ("Pipeline", "C"),
 }
 
+# Kraftstoffe einerseits, Equipment andererseits - der Unterschied ist mehr
+# als eine Sortierung: Equipment trifft laufend von Mitgliedern ein und
+# taugt deshalb nicht als Indiz dafuer, dass geliefert wurde.
+KRAFTSTOFFE = tuple(sorted(set(ROHSTOFF_KEYS.values())))
+EQUIPMENT = tuple(sorted({art for art, _ in EQUIPMENT_KEYS.values()}))
+
 # Lagertyp fuer Kraftstoffe und fuer Equipment.
 TYP_TANKLAGER = 4
 TYP_EQUIPMENT = 9

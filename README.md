@@ -70,16 +70,29 @@ python oi_dashboard.py --einmal # Datenblock einmal als JSON
 | `telegram.token`, `telegram.chat_ids` | trägt `bot_einrichten.py` ein |
 | `windows_meldung` | Windows-Benachrichtigung an oder aus |
 | `takt_minuten` | Abstand zwischen zwei Prüfungen, Standard 10 |
-| `vertraege[]` | je Vertrag: `nummer`, `slots`, `bedarf`, `bis`, `aktiv` |
+| `vertraege[]` | je Vertrag: `nummer`, `slots`, `bedarf`, `bis`, `aktiv`, `lieferungen` |
+| `vertraege[].lieferungen` | Gesamtzahl der Teillieferungen. Ohne diesen Wert kann ein Termin zu viel entstehen — siehe unten. |
 | `dashboard.adresse`, `.port` | Bindung der Seite, Standard `127.0.0.1:8099` |
 | `dashboard.benutzer`, `.passwort` | HTTP-Basic. Leer heißt: ungeschützt. |
 | `mitglieder` | optional; ordnet Spielkonten einer Person zu, wenn jemand mehrere hat |
 
 `oi_config.json` enthält Zugangsdaten und ist deshalb von der Versionsverwaltung ausgenommen. Versioniert ist nur die Vorlage.
 
-**Die erste Ware in `bedarf` dient zur Erkennung**, ob eine Lieferung stattgefunden hat: Der Wächter vergleicht den Lagerstand mit dem bei Fensteröffnung und hält die Lieferung für erfolgt, wenn er um mindestens 90 % der Liefermenge gefallen ist. Nicht 100 %, weil zwischen zwei Abfragen auch anderes zu- und abgehen kann.
+### Wie eine erfolgte Lieferung erkannt wird
 
-Zwei Feinheiten daran sind teuer bezahlt:
+Das Spiel meldet nicht, dass geliefert wurde. Der Wächter schließt es aus dem Lagerabfluss seit Fensteröffnung. Klingt einfach, ist es nicht — jede der folgenden Regeln steht für einen Fall, in dem eine einfachere danebenlag:
+
+**Nur Kraftstoffe zählen als Indiz.** Equipment trifft laufend von Mitgliedern ein. Sinkt der Pipeline-Bestand durch eine Lieferung um 30 und steigt im selben Zeitraum durch Zulieferungen um 69, steht unterm Strich ein Plus — obwohl geliefert wurde. Ein Warenkorb aus reinem Equipment ist deshalb nicht beweisbar.
+
+**Eine Ware, deren Bestand nicht gesunken ist, schweigt — sie widerspricht nicht.** Auch Kraftstoffe treffen laufend ein, aus der Raffinerie und von Mitgliedern. Sinkt Kerosin exakt um die Liefermenge, kommen im selben Zehnminutenfenster aber 440.000 Benzin herein, dann steht beim Benzin ein Plus. Wer verlangt, dass *jede* Ware den Rückgang zeigt, legt damit ein Veto ein und meldet den ganzen Tag „offen".
+
+**Ein Rückgang, der kleiner ist als der Bedarf, bleibt ein Widerspruch.** Da ging etwas raus, aber zu wenig.
+
+**Der Abfluss wird abgebucht.** Zwei Verträge im selben Fenster können nicht denselben Rückgang für sich verbuchen: Hat der erste ihn verbraucht, ist die Ware für den zweiten leer — und leer ist ein Widerspruch, nicht Stille.
+
+Die Schwelle liegt bei 90 % der Liefermenge, nicht bei 100 %, weil zwischen zwei Abfragen auch anderes zu- und abgehen kann.
+
+Zwei weitere Feinheiten sind ebenso teuer bezahlt:
 
 **Der Ausgangswert kommt aus `lager_verlauf.csv`, nicht aus der laufenden Abfrage.** Zwischen Fensteröffnung und dem ersten Durchlauf danach liegt ein ganzer Takt. Wer in dieser Lücke liefert, wäre sonst nie zu erkennen — der Bezugswert wäre bereits der Stand *nach* der Lieferung, und der gesuchte Rückgang hätte nie stattgefunden. Genau das ist im Betrieb passiert: Fenster um 09:45, Takt auf :43 und :53, geliefert um 09:52. Beide Lieferungen galten den ganzen Vormittag als offen.
 
@@ -136,7 +149,7 @@ Nützlich ist derselbe Aufbau auch als Totmannschalter: ein Zeitplan, der regelm
 
 ## Grenzen
 
-- Der Wächter erkennt eine erfolgte Lieferung am Rückgang des Lagerstands, nicht an einer Meldung des Spiels. Wer im selben Zeitfenster große Mengen derselben Ware anderweitig verbraucht, kann ihn täuschen.
+- Die Lieferungserkennung schließt aus dem Lagerabfluss, sie misst nicht die Lieferung selbst. Wer im selben Zeitfenster große Mengen derselben Ware anderweitig verbraucht, kann sie täuschen. Ein Warenkorb aus reinem Equipment ist gar nicht erkennbar.
 - Die Gesamtlage rechnet höchstens 14 Tage voraus (`HORIZONT_TAGE`). Ein Vertrag mit fernem Enddatum ergäbe sonst eine Zahl, die niemandem hilft.
 - Zwischen zwei Prüfungen liegen standardmäßig zehn Minuten. Was dazwischen passiert, sieht der Wächter erst danach.
 - Die Morgenlage speichert ihre Daten bis zu 60 Sekunden zwischen. Mehrere offene Browserfenster sollen die Schnittstelle nicht vervielfachen.

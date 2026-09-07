@@ -36,9 +36,9 @@ VORLAUF = timedelta(hours=4)
 # Minute Zuschlag ist Sicherheitsabstand gegen ungenaue Uhren.
 ANNAHMESPERRE = timedelta(hours=1, minutes=1)
 
-# Eine Lieferung gilt als erfolgt, wenn der Lagerstand der ersten Ware des
-# Vertrags um mindestens diesen Anteil der Liefermenge gefallen ist. Nicht
-# 100 %, weil zwischen zwei Abfragen auch anderes zu- und abgehen kann.
+# Eine Ware belegt die Lieferung, wenn der Lagerabfluss seit Fensteroeffnung
+# mindestens diesen Anteil ihrer Liefermenge ausmacht. Nicht 100 %, weil
+# zwischen zwei Abfragen auch anderes zu- und abgehen kann.
 ERKENNUNGSSCHWELLE = 0.9
 
 # Wie weit die Gesamtlage vorausrechnet. Ein Vertrag darf ein Enddatum weit
@@ -121,9 +121,8 @@ def sperrzeit(cfg, jetzt):
 def offene_lieferungen(v, jetzt, zustand, horizont=HORIZONT_TAGE):
     """Noch ausstehende Termine eines Vertrags, hoechstens `horizont` Tage weit.
 
-    Termine, die bereits als erledigt gemeldet wurden, zaehlen nicht mit.
-    Das Enddatum des Vertrags begrenzt zusaetzlich - es gilt, was frueher
-    kommt.
+    Termine, die als erledigt gelten, zaehlen nicht mit. Das Enddatum des
+    Vertrags begrenzt zusaetzlich - es gilt, was frueher kommt.
     """
     grenze = (jetzt + timedelta(days=horizont)).date()
     if v.get("bis"):
@@ -143,10 +142,34 @@ def offene_lieferungen(v, jetzt, zustand, horizont=HORIZONT_TAGE):
             if termin <= jetzt:
                 continue
             eintrag = zustand.get(schluessel(v, termin), {})
-            if not eintrag.get("erledigt_gemeldet"):
-                termine.append(termin)
+            # "erledigt" ist die erkannte Tatsache, "erledigt_gemeldet" nur
+            # der Versand der Nachricht. Eine erkannte, aber nicht
+            # zugestellte Lieferung darf die Deckungsrechnung nicht mehr
+            # belasten.
+            if eintrag.get("erledigt") or eintrag.get("erledigt_gemeldet"):
+                continue
+            termine.append(termin)
         tag += timedelta(days=1)
-    return sorted(termine)
+    termine.sort()
+
+    # `bis` nennt nur den letzten TAG. Wird ein Vertrag mitten am Tag
+    # angenommen, passen die restlichen Lieferungen nicht mehr auf ganze
+    # Tage und `bis` muss einen Tag weiter stehen - dann gaebe es einen
+    # Termin zu viel, und der Waechter plante Ware fuer einen Geistertermin
+    # ein. Steht `lieferungen` in der Konfiguration, wird darauf gekuerzt.
+    gesamt = v.get("lieferungen")
+    if gesamt:
+        rest = max(0, int(gesamt) - erledigte_lieferungen(v, zustand))
+        termine = termine[:rest]
+    return termine
+
+
+def erledigte_lieferungen(v, zustand):
+    """Wie viele Teillieferungen dieses Vertrags gelten schon als erledigt?"""
+    praefix = "%s " % v.get("nummer", "?")
+    return sum(1 for s, e in zustand.items()
+               if isinstance(e, dict) and s.startswith(praefix)
+               and (e.get("erledigt") or e.get("erledigt_gemeldet")))
 
 
 def schluessel(v, termin):
@@ -253,29 +276,70 @@ def baue_meldung(cfg, v, bestand, termin, erledigt, jetzt=None):
 
 # -------------------------------------------------------------------- Lauf
 
-def ist_erledigt(v, eintrag, bestand):
+def fluessige(v):
+    """Die Waren des Warenkorbs, deren Abgang man im Lager sehen kann.
+
+    Equipment taugt nicht als Indiz: Es trifft laufend von Mitgliedern ein.
+    Sinkt der Pipeline-Bestand durch eine Lieferung um 30 und steigt im
+    selben Zeitraum durch Zulieferungen um 69, steht unterm Strich ein Plus,
+    obwohl geliefert wurde.
+    """
+    return [ware for ware in (v.get("bedarf") or {})
+            if ware in schnitt.KRAFTSTOFFE]
+
+
+def ist_erledigt(v, eintrag, bestand, budget=None):
     """Gilt die Teillieferung als erfolgt? Vermerkt das Ergebnis im Eintrag.
 
-    Erkannt wird sie am Rueckgang der ERSTEN Ware des Bedarfs gegenueber
-    dem Stand bei Fensteroeffnung. Nicht am vollen Betrag, weil zwischen
-    zwei Abfragen auch anderes zu- und abgehen kann.
+    Erkannt wird sie am Lagerabfluss seit Fensteroeffnung, gemessen ueber
+    alle Kraftstoffe des Warenkorbs. Drei Feinheiten, jede aus einem Fall,
+    in dem eine einfachere Regel danebenlag:
+
+    **Eine Ware, deren Bestand nicht gesunken ist, gilt als stumm, nicht als
+    Widerspruch.** Auch Kraftstoffe treffen laufend ein - aus der Raffinerie
+    und von Mitgliedern. Sinkt Kerosin exakt um die Liefermenge, kommen im
+    selben Zehnminutenfenster aber 440.000 Benzin herein, dann steht beim
+    Benzin ein Plus. Wer verlangt, dass JEDE Ware den Rueckgang zeigt, legt
+    damit ein Veto ein und meldet den ganzen Tag "offen".
+
+    **Ein Rueckgang, der kleiner ist als der Bedarf, bleibt ein
+    Widerspruch.** Da ging etwas raus, aber zu wenig.
+
+    **Der Abfluss wird abgebucht** (`budget`). Zwei Vertraege im selben
+    Fenster koennen so nicht denselben Rueckgang fuer sich verbuchen: Hat
+    der erste ihn verbraucht, ist die Ware fuer den zweiten leer - und leer
+    ist ein Widerspruch, nicht Stille.
 
     Einmal erkannt, bleibt erledigt. Eine Lieferung ist eine Tatsache;
-    nachgelieferte Ware verkleinert den gemessenen Rueckgang und liesse
-    den Termin sonst wieder als offen erscheinen - mitsamt neuer Meldung.
+    nachgelieferte Ware liesse den Termin sonst wieder als offen erscheinen.
     """
     if eintrag.get("erledigt"):
         return True
 
-    bedarf = list((v.get("bedarf") or {}).items())
-    if not bedarf:
-        return False
-    ware, menge = bedarf[0]
-    rueckgang = (eintrag.get("start") or {}).get(ware, 0) - bestand.get(ware, 0)
-    if menge > 0 and rueckgang >= menge * ERKENNUNGSSCHWELLE:
-        eintrag["erledigt"] = True
-        return True
-    return False
+    if budget is None:
+        budget = {}
+    start = eintrag.get("start") or {}
+    bedarf = v.get("bedarf") or {}
+    waren = fluessige(v)
+    if not waren:
+        return False          # nur Equipment - allein nicht beweisbar
+
+    belege = []
+    for ware in waren:
+        if ware not in budget:
+            budget[ware] = max(0, start.get(ware, 0) - bestand.get(ware, 0))
+        noetig = bedarf.get(ware, 0)
+        if noetig > 0 and budget[ware] >= noetig * ERKENNUNGSSCHWELLE:
+            belege.append(ware)
+        elif start.get(ware, 0) > bestand.get(ware, 0):
+            return False      # Abgang da, aber zu klein
+
+    if not belege:
+        return False          # keine einzige Ware belegt die Lieferung
+    for ware in belege:
+        budget[ware] -= bedarf[ware]
+    eintrag["erledigt"] = True
+    return True
 
 
 def stand_bei(zeitpunkt, pfad=None):
@@ -408,6 +472,11 @@ def einmal(cfg, senden=True):
         k.schreibe_json(ZUSTAND, zustand)
         return
 
+    # Der Lagerabfluss wird ueber alle faelligen Vertraege hinweg nur einmal
+    # vergeben. Sonst verbuchten zwei Vertraege im selben Fenster denselben
+    # Rueckgang jeder fuer sich.
+    budget = {}
+
     for termin, fenster, v in sorted(faellig, key=lambda x: x[0]):
         eintrag = zustand.setdefault(schluessel(v, termin), {})
         eintrag["termin"] = termin.strftime("%Y-%m-%d %H:%M")
@@ -419,7 +488,7 @@ def einmal(cfg, senden=True):
         if "start" not in eintrag:
             eintrag["start"] = stand_bei(fenster) or bestand
 
-        erledigt = ist_erledigt(v, eintrag, bestand)
+        erledigt = ist_erledigt(v, eintrag, bestand, budget)
 
         text = baue_meldung(cfg, v, bestand, termin, erledigt, jetzt)
         if lage:
