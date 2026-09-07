@@ -145,7 +145,19 @@ Der Wächter meldet von sich aus. Wer umgekehrt **den Bot fragen** will („wie 
 
 Das ist bewusst **nicht Teil dieses Repos**: Ein n8n-Ablauf enthält Verweise auf die Zugänge der eigenen Instanz und ist ohne sie wertlos. `/api/lage` liefert alles Nötige als JSON, und das ist die ganze Schnittstelle, die man dafür braucht.
 
-Nützlich ist derselbe Aufbau auch als Totmannschalter: ein Zeitplan, der regelmäßig `/gesundheit` abruft und Alarm schlägt, wenn nichts antwortet. Mit einer Einschränkung, die man kennen sollte — läuft n8n auf demselben Server, schweigt es mit, wenn der Server stirbt. Eine zweite Prüfung von einem anderen Rechner deckt erst den Fall ab, in dem der ganze Server weg ist.
+Nützlich ist derselbe Aufbau auch als Totmannschalter: ein Zeitplan, der regelmäßig `/gesundheit` abruft.
+
+Der Endpunkt fragt dafür **nicht** die Spielschnittstelle, sondern liest nur das Alter der letzten Zeile in `lager_verlauf.csv` — die schreibt der Wächter bei jedem Durchlauf fort, auch wenn gerade kein Vertrag läuft. Er darf deshalb beliebig oft abgefragt werden.
+
+```json
+{ "stufe": "ok", "meldung": "Lieferwaechter laeuft.", "alter_sekunden": 143 }
+```
+
+`stufe` ist `ok`, `warnung` (ab dem 2,5-fachen Takt — mindestens ein Durchlauf fehlt) oder `alarm` (ab dem Vierfachen). Bei `alarm` ist auch der HTTP-Status **503**, damit ein schlichter Wachdienst anschlägt, der nur auf die Zahl schaut.
+
+Das ist der Punkt, an dem eine naive Prüfung nichts taugt: Ein Endpunkt, der bloß „ok" sagt, solange der Webserver antwortet, meldet auch dann noch Gesundheit, wenn der Wächter seit Stunden tot ist.
+
+Eine Einschränkung bleibt: Läuft n8n auf demselben Server, schweigt es mit, wenn der Server stirbt. Erst eine zweite Prüfung von einem anderen Rechner deckt auch diesen Fall ab.
 
 ## Grenzen
 

@@ -79,6 +79,73 @@ def verlauf(zeilen=72, pfad=None):
     return ergebnis
 
 
+def letzte_zeile_alter(pfad):
+    """(Alter der letzten Verlaufszeile in Sekunden, ihr Zeitstempel).
+
+    Liest nur das Dateiende. Der Verlauf waechst mit jedem Durchlauf; ihn
+    fuer eine Zustandspruefung ganz zu lesen, waere Verschwendung.
+    """
+    if not os.path.exists(pfad):
+        return None, None
+    try:
+        with open(pfad, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            groesse = f.tell()
+            f.seek(max(0, groesse - 4096))
+            zeilen = [z for z in f.read().decode("utf-8", "replace").splitlines()
+                      if z.strip()]
+        if not zeilen:
+            return None, None
+        zeit = zeilen[-1].split(";")[0]
+        stand = datetime.strptime(zeit, "%Y-%m-%d %H:%M:%S")
+        return int((datetime.now() - stand).total_seconds()), zeit
+    except (OSError, ValueError):
+        return None, None
+
+
+def gesundheit(cfg, pfad=None):
+    """Laeuft der Waechter noch? Ohne Aufruf der Spielschnittstelle.
+
+    Fuer einen Totmannschalter gedacht, der alle paar Minuten fragen darf,
+    ohne Last zu erzeugen. Massgeblich ist `lager_verlauf.csv`: Der Waechter
+    schreibt sie bei JEDEM Durchlauf fort, auch wenn kein Vertrag laeuft.
+
+    Eine Pruefung, die nur meldet "der Webserver antwortet", waere wertlos -
+    er antwortet auch dann noch, wenn der Waechter seit Stunden tot ist.
+
+    Die Schwellen leiten sich aus dem Takt ab: ab dem 2,5-fachen fehlt
+    mindestens ein Durchlauf, ab dem Vierfachen mehrere.
+
+    `pfad` ist fuer den Selbsttest da.
+    """
+    takt = max(1, int(cfg.get("takt_minuten", 10))) * 60
+    warnung_ab, alarm_ab = int(takt * 2.5), takt * 4
+
+    alter, zeit = letzte_zeile_alter(pfad or w.VERLAUF)
+    if alter is None:
+        stufe, text = "alarm", "Kein Lagerverlauf vorhanden."
+    elif alter >= alarm_ab:
+        stufe = "alarm"
+        text = ("Der Lieferwaechter meldet sich seit %d Minuten nicht mehr."
+                % (alter // 60))
+    elif alter >= warnung_ab:
+        stufe = "warnung"
+        text = ("Letzter Durchlauf des Lieferwaechters vor %d Minuten."
+                % (alter // 60))
+    else:
+        stufe, text = "ok", "Lieferwaechter laeuft."
+
+    return {
+        "stufe": stufe,
+        "ok": stufe == "ok",
+        "meldung": text,
+        "alter_sekunden": alter,
+        "letzte_zeile": zeit,
+        "grenzen": {"warnung_sekunden": warnung_ab, "alarm_sekunden": alarm_ab},
+        "jetzt": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+
 def naechste_lieferung(cfg, jetzt):
     """Der zeitlich naechste Termin ueber alle Vertraege."""
     kandidaten = []
@@ -181,13 +248,33 @@ def lage(cfg):
 
 
 def lage_gepuffert(cfg):
-    """Die Lage, hoechstens einmal je CACHE_SEKUNDEN frisch geholt."""
+    """Die Lage, hoechstens einmal je CACHE_SEKUNDEN frisch geholt.
+
+    Ein fehlerhafter Block verdraengt einen guten nicht. Sonst wuerde ein
+    einzelner Aussetzer der Schnittstelle die Seite fuer eine ganze Minute
+    leeren - obwohl eben noch brauchbare Zahlen dastanden. Stattdessen
+    bleiben die letzten guten stehen, mit dem Vermerk `veraltet` und den
+    aktuellen Fehlern; ihr Alter ist am Feld `stand` abzulesen.
+    """
     with _sperre:
-        alt = time.time() - _cache["zeit"]
-        if _cache["daten"] is None or alt > CACHE_SEKUNDEN:
-            _cache["daten"] = lage(cfg)
-            _cache["zeit"] = time.time()
-        return _cache["daten"]
+        if _cache["daten"] is not None and \
+                time.time() - _cache["zeit"] <= CACHE_SEKUNDEN:
+            return _cache["daten"]
+
+        frisch = lage(cfg)
+        gut = _cache["daten"]
+        if frisch["fehler"] and gut is not None and not gut.get("veraltet"):
+            ersatz = dict(gut)
+            ersatz["veraltet"] = True
+            ersatz["fehler"] = frisch["fehler"]
+            # Nicht zwischenspeichern: Beim naechsten Abruf soll es sofort
+            # wieder mit den echten Daten versucht werden.
+            return ersatz
+
+        frisch["veraltet"] = False
+        _cache["daten"] = frisch
+        _cache["zeit"] = time.time()
+        return frisch
 
 
 # ------------------------------------------------------------------ Server
@@ -247,6 +334,8 @@ class Handler(BaseHTTPRequestHandler):
         # Die Seite holt ihre Daten selbst; zwischengespeicherte Antworten
         # wuerden einen alten Stand zeigen, ohne dass man es merkt.
         self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
         self.end_headers()
         self.wfile.write(inhalt)
 
@@ -261,8 +350,12 @@ class Handler(BaseHTTPRequestHandler):
             return self.sende(daten, "application/json; charset=utf-8")
 
         if pfad == "/gesundheit":
-            # Fuer eine Ueberwachung von aussen: knapp, ohne Zahlen.
-            return self.sende("ok\n", "text/plain; charset=utf-8")
+            zustand = gesundheit(self.cfg)
+            # Bei Alarm auch im Statuscode, damit ein schlichter Wachdienst
+            # anschlaegt, der nur auf die Zahl schaut und nicht in den Rumpf.
+            code = 503 if zustand["stufe"] == "alarm" else 200
+            return self.sende(json.dumps(zustand, ensure_ascii=False),
+                              "application/json; charset=utf-8", code)
 
         if pfad == "/":
             try:

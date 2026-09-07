@@ -15,6 +15,7 @@ import threading
 import urllib.error
 import urllib.request
 from base64 import b64encode
+from datetime import datetime, timedelta
 from http.server import ThreadingHTTPServer
 
 import oi_dashboard as d
@@ -74,6 +75,36 @@ with tempfile.TemporaryDirectory() as ordner:
     pruefe("eine fehlende Datei ist kein Fehler",
            d.verlauf(pfad=os.path.join(ordner, "gibtsnicht.csv")) == [])
 
+print("\n== Gesundheit ==")
+# Eine Pruefung, die nur meldet "der Webserver antwortet", waere wertlos: Er
+# antwortet auch dann noch, wenn der Waechter seit Stunden tot ist.
+# Massgeblich ist das Alter der letzten Verlaufszeile.
+def _verlauf_mit(alter_minuten):
+    _fd, _pfad = tempfile.mkstemp(suffix=".csv")
+    os.close(_fd)
+    _stand = datetime.now() - timedelta(minutes=alter_minuten)
+    with open(_pfad, "w", encoding="utf-8") as _f:
+        _f.write("zeit;Rohoel;Kerosin;Diesel;Benzin;Turm;Tank;Pipeline\n")
+        _f.write(_stand.strftime("%Y-%m-%d %H:%M:%S") + ";1;2;3;4;5;6;7\n")
+    return _pfad
+
+# Takt 10 Minuten: Warnung ab 25, Alarm ab 40.
+_takt = dict(CFG, takt_minuten=10)
+for _minuten, _erwartet in ((2, "ok"), (30, "warnung"), (90, "alarm")):
+    _p = _verlauf_mit(_minuten)
+    _z = d.gesundheit(_takt, pfad=_p)
+    pruefe("letzte Zeile vor %d Minuten -> %s" % (_minuten, _erwartet),
+           _z["stufe"] == _erwartet, _z["stufe"])
+    os.remove(_p)
+
+pruefe("ohne Verlauf gilt Alarm",
+       d.gesundheit(_takt, pfad="gibt-es-nicht.csv")["stufe"] == "alarm")
+
+# Die Schwellen haengen am Takt, nicht an festen Zahlen.
+_langsam = d.gesundheit(dict(CFG, takt_minuten=60), pfad="gibt-es-nicht.csv")
+pruefe("bei Takt 60 liegt der Alarm bei vier Stunden",
+       _langsam["grenzen"]["alarm_sekunden"] == 4 * 3600, _langsam["grenzen"])
+
 print("\n== Datenblock trotz toter Schnittstelle ==")
 lage = d.lage(CFG)
 pruefe("es gibt einen Block", isinstance(lage, dict))
@@ -86,6 +117,23 @@ pruefe("offene Lieferungen wurden gezaehlt",
        lage["offene_lieferungen"] > 0, lage["offene_lieferungen"])
 pruefe("der Block ist als JSON darstellbar",
        isinstance(json.dumps(lage, ensure_ascii=False), str))
+
+print("\n== Zwischenspeicher haelt gute Daten ==")
+# Ein Aussetzer der Schnittstelle darf einen brauchbaren Stand nicht
+# verdraengen - sonst waere die Seite nach einem einzigen Fehlversuch eine
+# ganze Minute lang leer.
+d._cache["daten"] = {"stand": "2026-01-02 09:00:00",
+                     "konzern": "Beispielkonzern",
+                     "lager": {"Diesel": 42}, "fehler": [], "veraltet": False}
+d._cache["zeit"] = 0.0            # gilt als abgelaufen
+_ersatz = d.lage_gepuffert(CFG)   # die Welt .invalid schlaegt fehl
+pruefe("der gute Stand bleibt stehen", _ersatz["lager"] == {"Diesel": 42},
+       _ersatz.get("lager"))
+pruefe("und ist als veraltet gekennzeichnet", _ersatz.get("veraltet") is True)
+pruefe("die neuen Fehler stehen dabei", len(_ersatz["fehler"]) >= 1)
+pruefe("der schlechte Block wurde nicht gespeichert",
+       d._cache["daten"]["lager"] == {"Diesel": 42})
+d._cache["daten"], d._cache["zeit"] = None, 0.0
 
 print("\n== Auslieferung ohne Anmeldung ==")
 d.Handler.cfg = CFG
@@ -101,8 +149,10 @@ try:
     pruefe("und sind gueltiges JSON",
            json.loads(rumpf).get("konzern") == "Beispielkonzern")
 
-    status, _ = hole(server, "/gesundheit")
-    pruefe("der Gesundheitsruf antwortet", status == 200, status)
+    status, rumpf = hole(server, "/gesundheit")
+    pruefe("der Gesundheitsruf antwortet mit 200 oder 503",
+           status in (200, 503), status)
+    pruefe("und liefert eine Stufe", "stufe" in json.loads(rumpf), rumpf[:60])
 
     status, _ = hole(server, "/gibtsnicht")
     pruefe("unbekannte Pfade ergeben 404", status == 404, status)

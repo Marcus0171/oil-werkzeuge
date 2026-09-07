@@ -146,6 +146,12 @@ function zeichne(d) {
 
   const meldungen = document.getElementById("meldungen");
   meldungen.replaceChildren();
+  // Veraltete Zahlen duerfen nicht wie frische aussehen. Der Zeitpunkt
+  // steht ohnehin oben unter "Stand", aber niemand liest ihn, solange
+  // nichts darauf hinweist.
+  if (d.veraltet)
+    meldungen.appendChild(el("div", "band warnung",
+      "Diese Zahlen sind vom " + d.stand + " – die Schnittstelle antwortet gerade nicht."));
   (d.fehler || []).forEach(f =>
     meldungen.appendChild(el("div", "band schlecht", f)));
   if (d.sperre_bis)

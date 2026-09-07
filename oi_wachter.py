@@ -429,6 +429,16 @@ def _naechster_ausloeser(eintrag, erledigt, minuten_bis):
 def einmal(cfg, senden=True):
     """Eine Pruefung. Der ganze Waechter in einem Durchlauf."""
     jetzt = datetime.now()
+
+    # Den Lagerstand IMMER erfassen, auch ohne laufenden Vertrag. Der
+    # Verlauf ist die Grundlage der Lieferungserkennung und zugleich das
+    # Lebenszeichen, an dem die Gesundheitspruefung ablesen kann, dass der
+    # Waechter noch laeuft. Stuende das hinter dem Abbruch weiter unten,
+    # bliebe die Reihe genau in den Pausen zwischen zwei Vertraegen stehen -
+    # und der Totmannschalter meldete Alarm, obwohl alles in Ordnung ist.
+    bestand = schnitt.lagerstand(cfg)
+    protokolliere(bestand)
+
     aktive = laufende_vertraege(cfg, jetzt)
     if not aktive:
         print("[%s] Kein laufender Vertrag - nichts zu pruefen."
@@ -443,8 +453,6 @@ def einmal(cfg, senden=True):
         if termin is not None:
             (faellig if jetzt >= fenster else wartend).append((termin, fenster, v))
 
-    bestand = schnitt.lagerstand(cfg)
-    protokolliere(bestand)
     lage, knapp = baue_gesamtlage(cfg, bestand, jetzt, zustand)
     if lage:
         print(nur_text(lage))
