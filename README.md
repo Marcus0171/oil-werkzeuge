@@ -77,7 +77,13 @@ python oi_dashboard.py --einmal # Datenblock einmal als JSON
 
 `oi_config.json` enthält Zugangsdaten und ist deshalb von der Versionsverwaltung ausgenommen. Versioniert ist nur die Vorlage.
 
-**Die erste Ware in `bedarf` dient zur Erkennung**, ob eine Lieferung stattgefunden hat: Der Wächter merkt sich den Lagerstand bei Fensteröffnung und hält die Lieferung für erfolgt, wenn dieser Stand um mindestens 90 % der Liefermenge gefallen ist. Nicht 100 %, weil zwischen zwei Abfragen auch anderes zu- und abgehen kann.
+**Die erste Ware in `bedarf` dient zur Erkennung**, ob eine Lieferung stattgefunden hat: Der Wächter vergleicht den Lagerstand mit dem bei Fensteröffnung und hält die Lieferung für erfolgt, wenn er um mindestens 90 % der Liefermenge gefallen ist. Nicht 100 %, weil zwischen zwei Abfragen auch anderes zu- und abgehen kann.
+
+Zwei Feinheiten daran sind teuer bezahlt:
+
+**Der Ausgangswert kommt aus `lager_verlauf.csv`, nicht aus der laufenden Abfrage.** Zwischen Fensteröffnung und dem ersten Durchlauf danach liegt ein ganzer Takt. Wer in dieser Lücke liefert, wäre sonst nie zu erkennen — der Bezugswert wäre bereits der Stand *nach* der Lieferung, und der gesuchte Rückgang hätte nie stattgefunden. Genau das ist im Betrieb passiert: Fenster um 09:45, Takt auf :43 und :53, geliefert um 09:52. Beide Lieferungen galten den ganzen Vormittag als offen.
+
+**Einmal erkannt, bleibt erledigt.** Wird nach der Lieferung nachgeliefert, schrumpft der gemessene Rückgang wieder. Ohne Gedächtnis erschiene der Termin erneut als offen — mitsamt neuer Meldung für etwas, das längst durch ist.
 
 ## Prüfskripte
 

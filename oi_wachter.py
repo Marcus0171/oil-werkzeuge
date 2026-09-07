@@ -253,6 +253,78 @@ def baue_meldung(cfg, v, bestand, termin, erledigt, jetzt=None):
 
 # -------------------------------------------------------------------- Lauf
 
+def ist_erledigt(v, eintrag, bestand):
+    """Gilt die Teillieferung als erfolgt? Vermerkt das Ergebnis im Eintrag.
+
+    Erkannt wird sie am Rueckgang der ERSTEN Ware des Bedarfs gegenueber
+    dem Stand bei Fensteroeffnung. Nicht am vollen Betrag, weil zwischen
+    zwei Abfragen auch anderes zu- und abgehen kann.
+
+    Einmal erkannt, bleibt erledigt. Eine Lieferung ist eine Tatsache;
+    nachgelieferte Ware verkleinert den gemessenen Rueckgang und liesse
+    den Termin sonst wieder als offen erscheinen - mitsamt neuer Meldung.
+    """
+    if eintrag.get("erledigt"):
+        return True
+
+    bedarf = list((v.get("bedarf") or {}).items())
+    if not bedarf:
+        return False
+    ware, menge = bedarf[0]
+    rueckgang = (eintrag.get("start") or {}).get(ware, 0) - bestand.get(ware, 0)
+    if menge > 0 and rueckgang >= menge * ERKENNUNGSSCHWELLE:
+        eintrag["erledigt"] = True
+        return True
+    return False
+
+
+def stand_bei(zeitpunkt, pfad=None):
+    """Lagerstand aus dem Verlauf kurz VOR einem Zeitpunkt, sonst None.
+
+    Der Ausgangswert einer Lieferung muss der Stand bei Fensteroeffnung
+    sein, nicht der beim ersten Durchlauf danach. Zwischen beiden liegt
+    ein ganzer Takt - wer in dieser Luecke liefert, wird sonst nie
+    erkannt: Der Bezugswert ist dann schon der Stand NACH der Lieferung,
+    und der Rueckgang, den der Waechter sucht, hat nie stattgefunden.
+
+    Der Verlauf kennt den richtigen Wert, weil er bei jeder Pruefung
+    fortgeschrieben wird. Findet sich keine Zeile davor, gibt es keine
+    bessere Auskunft als den aktuellen Stand - dann None.
+    """
+    pfad = pfad or VERLAUF
+    if not os.path.exists(pfad):
+        return None
+
+    treffer = None
+    try:
+        with open(pfad, "r", encoding="utf-8") as f:
+            kopf = f.readline().rstrip("\n").split(";")
+            for zeile in f:
+                teile = zeile.rstrip("\n").split(";")
+                if len(teile) != len(kopf):
+                    continue
+                try:
+                    wann = datetime.strptime(teile[0], "%Y-%m-%d %H:%M:%S")
+                except ValueError:
+                    continue
+                if wann >= zeitpunkt:
+                    break              # die Datei ist chronologisch
+                treffer = teile
+    except OSError as e:
+        print(">> Verlauf nicht lesbar: %s" % e)
+        return None
+
+    if treffer is None:
+        return None
+    stand = {}
+    for name, wert in zip(kopf[1:], treffer[1:]):
+        try:
+            stand[name] = int(wert)
+        except (TypeError, ValueError):
+            pass
+    return stand or None
+
+
 def protokolliere(bestand):
     """Haengt den Lagerstand an lager_verlauf.csv an.
 
@@ -336,21 +408,18 @@ def einmal(cfg, senden=True):
         k.schreibe_json(ZUSTAND, zustand)
         return
 
-    for termin, _fenster, v in sorted(faellig, key=lambda x: x[0]):
+    for termin, fenster, v in sorted(faellig, key=lambda x: x[0]):
         eintrag = zustand.setdefault(schluessel(v, termin), {})
         eintrag["termin"] = termin.strftime("%Y-%m-%d %H:%M")
 
-        # Der Lagerstand bei Fensteroeffnung ist der Bezugspunkt, an dem
-        # spaeter die erfolgte Lieferung erkannt wird.
+        # Der Bezugspunkt ist der Stand bei Fensteroeffnung, nicht der
+        # jetzige: Zwischen beiden liegt ein ganzer Takt, und wer in dieser
+        # Luecke liefert, waere sonst nie zu erkennen. Nur wenn der Verlauf
+        # nichts hergibt, bleibt der aktuelle Stand.
         if "start" not in eintrag:
-            eintrag["start"] = bestand
+            eintrag["start"] = stand_bei(fenster) or bestand
 
-        bedarf = list((v.get("bedarf") or {}).items())
-        erledigt = False
-        if bedarf:
-            ware, menge = bedarf[0]
-            rueckgang = eintrag["start"].get(ware, 0) - bestand.get(ware, 0)
-            erledigt = menge > 0 and rueckgang >= menge * ERKENNUNGSSCHWELLE
+        erledigt = ist_erledigt(v, eintrag, bestand)
 
         text = baue_meldung(cfg, v, bestand, termin, erledigt, jetzt)
         if lage:

@@ -119,6 +119,50 @@ pruefe("erledigt wird gemeldet",
 pruefe("erledigt nur einmal",
        w._naechster_ausloeser({"erledigt_gemeldet": True}, True, 5) is None)
 
+print("\n== Ausgangswert bei Fensteroeffnung ==")
+# Der Fall, der im Betrieb schiefging: Fenster oeffnet 09:45, der Takt
+# laeuft auf :43 und :53, geliefert wird um 09:52. Wer den Stand von 09:53
+# als Ausgangswert nimmt, misst gegen einen Wert NACH der Lieferung und
+# sieht den Rueckgang nie.
+import os as _os, tempfile as _tempfile
+_ordner = _tempfile.mkdtemp()
+_csv = _os.path.join(_ordner, "lager_verlauf.csv")
+with open(_csv, "w", encoding="utf-8") as _f:
+    _f.write("zeit;Rohoel;Kerosin;Diesel;Benzin;Turm;Tank;Pipeline\n")
+    _f.write("2026-09-07 09:33:10;0;500000;0;0;0;0;0\n")   # vor dem Fenster
+    _f.write("2026-09-07 09:43:33;0;500000;0;0;0;0;0\n")   # richtig: hier
+    _f.write("2026-09-07 09:53:34;0;207610;0;0;0;0;0\n")   # schon geliefert
+
+_fenster = datetime(2026, 9, 7, 9, 45)
+_stand = w.stand_bei(_fenster, pfad=_csv)
+pruefe("nimmt die Zeile VOR der Fensteroeffnung",
+       _stand and _stand["Kerosin"] == 500_000, _stand)
+pruefe("nicht die danach", _stand and _stand["Kerosin"] != 207_610, _stand)
+pruefe("vor der ersten Zeile gibt es nichts",
+       w.stand_bei(datetime(2026, 9, 7, 9, 0), pfad=_csv) is None)
+pruefe("ohne Datei ebenfalls nichts",
+       w.stand_bei(_fenster, pfad=_os.path.join(_ordner, "fehlt.csv")) is None)
+
+# Mit dem richtigen Ausgangswert wird die Lieferung erkannt.
+_v = {"nummer": "07-09", "bedarf": {"Kerosin": 292_390}}
+_eintrag = {"start": _stand}
+pruefe("Lieferung wird erkannt", w.ist_erledigt(_v, _eintrag, {"Kerosin": 207_610}))
+
+# Mit dem falschen Ausgangswert - dem Stand NACH der Lieferung - nicht.
+_falsch = {"start": {"Kerosin": 207_610}}
+pruefe("mit dem Stand danach bliebe sie unsichtbar",
+       not w.ist_erledigt(_v, _falsch, {"Kerosin": 207_610}))
+
+print("\n== Erledigt bleibt erledigt ==")
+# Wird nach der Lieferung nachgeliefert, schrumpft der gemessene Rueckgang.
+# Ohne Gedaechtnis erschiene der Termin wieder als offen - mitsamt neuer
+# Meldung fuer etwas, das laengst durch ist.
+_e = {"start": {"Kerosin": 500_000}}
+pruefe("erst erkannt", w.ist_erledigt(_v, _e, {"Kerosin": 207_610}))
+pruefe("im Eintrag vermerkt", _e.get("erledigt") is True, _e)
+pruefe("bleibt erledigt, auch wenn wieder aufgefuellt wird",
+       w.ist_erledigt(_v, _e, {"Kerosin": 500_000}))
+
 print("\n== Konsolentauglichkeit ==")
 # nur_text verspricht, Text fuer die Windows-Konsole zu entschaerfen. Die
 # laeuft oft auf cp1252 - was sich dort nicht kodieren laesst, bringt die
